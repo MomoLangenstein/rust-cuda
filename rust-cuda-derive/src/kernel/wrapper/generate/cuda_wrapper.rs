@@ -19,6 +19,15 @@ pub(in super::super) fn quote_cuda_wrapper(
     func_attrs: &[syn::Attribute],
     func_params: &[syn::Ident],
 ) -> TokenStream {
+    let target_os = match proc_macro::tracked_env::var("CARGO_CFG_TARGET_OS") {
+        Ok(target_os) => target_os,
+        Err(err) => abort_call_site!("Failed to read target OS: {:?}", err),
+    };
+
+    if target_os != "cuda" {
+        return quote!();
+    }
+
     let (ptx_func_inputs, ptx_func_types) = specialise_ptx_func_inputs(config, inputs);
     let ptx_func_unboxed_types = specialise_ptx_unboxed_types(config, inputs);
 
@@ -98,7 +107,6 @@ pub(in super::super) fn quote_cuda_wrapper(
     let func_type_layout_ident = quote::format_ident!("{}_type_layout", func_ident);
 
     quote! {
-        #[cfg(target_os = "cuda")]
         #[rust_cuda::device::specialise_kernel_entry(#args)]
         #[no_mangle]
         #(#func_attrs)*
@@ -113,7 +121,6 @@ pub(in super::super) fn quote_cuda_wrapper(
             )*
         }
 
-        #[cfg(target_os = "cuda")]
         #[rust_cuda::device::specialise_kernel_entry(#args)]
         #[no_mangle]
         #(#func_attrs)*

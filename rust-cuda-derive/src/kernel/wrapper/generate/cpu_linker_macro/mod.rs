@@ -31,6 +31,15 @@ pub(in super::super) fn quote_cpu_linker_macro(
     func_params: &[syn::Ident],
     func_attrs: &[syn::Attribute],
 ) -> TokenStream {
+    let target_os = match proc_macro::tracked_env::var("CARGO_CFG_TARGET_OS") {
+        Ok(target_os) => target_os,
+        Err(err) => abort_call_site!("Failed to read target OS: {:?}", err),
+    };
+
+    if target_os == "cuda" {
+        return quote!();
+    }
+
     let macro_types = generic_params
         .iter()
         .enumerate()
@@ -84,7 +93,6 @@ pub(in super::super) fn quote_cpu_linker_macro(
     );
 
     quote! {
-        #[cfg(not(target_os = "cuda"))]
         #cpu_linker_macro_visibility
         macro_rules! #linker {
             (#(#macro_types),* $(,)?) => {

@@ -51,20 +51,22 @@ pub(in super::super) fn quote_args_trait(
         })
         .collect::<Vec<_>>();
 
-    quote! {
-        #[cfg(not(target_os = "cuda"))]
-        #[allow(clippy::missing_safety_doc)]
-        #visibility unsafe trait #args #generic_start_token #generic_params #generic_close_token
-            #generic_where_clause
-        {
-            #(#func_input_typedefs)*
-        }
+    let target_os = match proc_macro::tracked_env::var("CARGO_CFG_TARGET_OS") {
+        Ok(target_os) => target_os,
+        Err(err) => abort_call_site!("Failed to read target OS: {:?}", err),
+    };
 
+    let visibility = if target_os == "cuda" {
+        syn::parse_quote! { pub }
+    } else {
+        *visibility
+    };
+
+    quote! {
         // #args must always be pub in CUDA kernel as it is used to define the
         //  public kernel entry point signature
-        #[cfg(target_os = "cuda")]
         #[allow(clippy::missing_safety_doc)]
-        pub unsafe trait #args #generic_start_token #generic_params #generic_close_token
+        #visibility unsafe trait #args #generic_start_token #generic_params #generic_close_token
             #generic_where_clause
         {
             #(#func_input_typedefs)*

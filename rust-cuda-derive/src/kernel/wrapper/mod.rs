@@ -304,6 +304,15 @@ fn quote_generic_check(
     }: &FuncIdent,
     KernelConfig { args, .. }: &KernelConfig,
 ) -> proc_macro2::TokenStream {
+    let target_os = match proc_macro::tracked_env::var("CARGO_CFG_TARGET_OS") {
+        Ok(target_os) => target_os,
+        Err(err) => abort_call_site!("Failed to read target OS: {:?}", err),
+    };
+
+    if target_os == "cuda" {
+        return quote!();
+    }
+
     let crate_name = match proc_macro::tracked_env::var("CARGO_CRATE_NAME") {
         Ok(crate_name) => crate_name.to_uppercase(),
         Err(err) => abort_call_site!("Failed to read crate name: {:?}.", err),
@@ -313,7 +322,6 @@ fn quote_generic_check(
         .unwrap_or_else(|err| abort_call_site!("Failed to read crate path: {:?}.", err));
 
     quote::quote_spanned! { func_ident_hash.span()=>
-        #[cfg(not(target_os = "cuda"))]
         const _: ::rust_cuda::safety::kernel_signature::Assert<{
             ::rust_cuda::safety::kernel_signature::CpuAndGpuKernelSignatures::Match
         }> = ::rust_cuda::safety::kernel_signature::Assert::<{

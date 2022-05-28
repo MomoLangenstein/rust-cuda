@@ -24,6 +24,11 @@ pub fn specialise_kernel_entry(attr: TokenStream, func: TokenStream) -> TokenStr
         Err(err) => abort_call_site!("Failed to read crate name: {:?}", err),
     };
 
+    let target_os = match proc_macro::tracked_env::var("CARGO_CFG_TARGET_OS") {
+        Ok(target_os) => target_os,
+        Err(err) => abort_call_site!("Failed to read target OS: {:?}", err),
+    };
+
     let specialisation_var = format!(
         "RUST_CUDA_DERIVE_SPECIALISE_{}_{}",
         crate_name,
@@ -33,10 +38,13 @@ pub fn specialise_kernel_entry(attr: TokenStream, func: TokenStream) -> TokenStr
     func.sig.ident = match proc_macro::tracked_env::var(&specialisation_var).as_deref() {
         Ok("") => quote::format_ident!("{}_kernel", func.sig.ident),
         Ok("chECK") => {
+            if target_os != "cuda" {
+                return quote!().into();
+            }
+
             let func_ident = func.sig.ident;
 
             return (quote! {
-                #[cfg(target_os = "cuda")]
                 #[no_mangle]
                 pub unsafe extern "ptx-kernel" fn #func_ident() {}
             })

@@ -28,6 +28,15 @@ pub(in super::super) fn quote_cpu_wrapper(
     }: &FuncIdent,
     func_attrs: &[syn::Attribute],
 ) -> TokenStream {
+    let target_os = match proc_macro::tracked_env::var("CARGO_CFG_TARGET_OS") {
+        Ok(target_os) => target_os,
+        Err(err) => abort_call_site!("Failed to read target OS: {:?}", err),
+    };
+
+    if target_os == "cuda" {
+        return quote!();
+    }
+
     let launcher_predicate = quote! {
         Self: Sized + rust_cuda::host::Launcher<
             KernelTraitObject = dyn #kernel #ty_generics
@@ -58,7 +67,6 @@ pub(in super::super) fn quote_cpu_wrapper(
         generate_new_func_inputs_decl(config, impl_generics, func_inputs);
 
     quote! {
-        #[cfg(not(target_os = "cuda"))]
         #[allow(clippy::missing_safety_doc)]
         #visibility unsafe trait #kernel #generic_start_token #generic_trait_params #generic_close_token
             #generic_trait_where_clause

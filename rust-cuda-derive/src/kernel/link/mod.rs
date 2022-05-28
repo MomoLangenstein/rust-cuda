@@ -186,9 +186,15 @@ fn compile_kernel(
     }
 
     let specialisation_var = format!(
-        "RUST_CUDA_DERIVE_SPECIALISE_{}_{}",
+        "RUST_CUDA_DERIVE_SPECIALISE_{}_{}_{}",
         crate_name,
-        args.to_string().to_uppercase()
+        match specialisation {
+            Specialisation::Check => String::from("CHECK"),
+            Specialisation::Link(specialisation) => {
+                format!("{:016X}", seahash::hash(specialisation.as_bytes()))
+            },
+        },
+        args.to_string().to_uppercase(),
     );
 
     if let Ok(kernel_path) =
