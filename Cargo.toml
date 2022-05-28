@@ -38,3 +38,6 @@ rust-cuda-ptx-jit = { path = "rust-cuda-ptx-jit" }
 
 [dev-dependencies]
 hashbrown = { version = "0.12", default-features = false, features = ["inline-more"] }
+
+[profile.dev.build-override]
+opt-level = 3

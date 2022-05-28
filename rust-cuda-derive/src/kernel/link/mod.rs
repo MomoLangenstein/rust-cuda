@@ -48,12 +48,6 @@ pub fn check_kernel(tokens: TokenStream) -> TokenStream {
     }
 }
 
-lazy_static::lazy_static! {
-    pub static ref CONST_LAYOUT_REGEX: regex::Regex = {
-        regex::Regex::new(r"(?m)^\.global \.align 1 \.b8 (?P<param>[A-Z_0-9]+)\[(?P<len>\d+)\] = \{(?P<bytes>\d+(?:, \d+)*)\};$").unwrap()
-    };
-}
-
 #[allow(clippy::module_name_repetitions)]
 pub fn link_kernel(tokens: TokenStream) -> TokenStream {
     proc_macro_error::set_dummy(quote! {
@@ -111,60 +105,100 @@ pub fn link_kernel(tokens: TokenStream) -> TokenStream {
 
     let mut type_layouts = Vec::new();
 
-    if let Some(start) = kernel_ptx.find(&format!("\n\t// .globl\t{}", kernel_layout_name)) {
-        let middle =
-            match kernel_ptx[start..].find(&format!(".visible .entry {}", kernel_layout_name)) {
+    let type_layout_start_pattern = format!("\n\t// .globl\t{}", kernel_layout_name);
+
+    if let Some(type_layout_start) = kernel_ptx.find(&type_layout_start_pattern) {
+        let after_type_layout_start = type_layout_start + type_layout_start_pattern.len();
+
+        let type_layout_middle = after_type_layout_start
+            + match kernel_ptx[after_type_layout_start..]
+                .find(&format!(".visible .entry {}", kernel_layout_name))
+            {
                 Some(middle) => middle,
                 None => abort_call_site!(
                     "Kernel compilation generated invalid PTX: incomplete type layout information."
                 ),
             };
 
-        for capture in CONST_LAYOUT_REGEX.captures_iter(&kernel_ptx[start..(start + middle)]) {
-            match (
-                capture.name("param"),
-                capture.name("len"),
-                capture.name("bytes"),
-            ) {
-                (Some(param), Some(len), Some(bytes)) => {
-                    let param = quote::format_ident!("{}", param.as_str());
+        let mut next_type_layout = after_type_layout_start;
 
-                    let len = match len.as_str().parse::<usize>() {
-                        Ok(len) => len,
-                        Err(err) => {
-                            abort_call_site!("Kernel compilation generated invalid PTX: {}", err)
-                        },
-                    };
+        const BEFORE_PARAM_PATTERN: &str = "\n.global .align 1 .b8 ";
+        const PARAM_LEN_PATTERN: &str = "[";
+        const LEN_BYTES_PATTERN: &str = "] = {";
+        const AFTER_BYTES_PATTERN: &str = "};\n";
+        const BYTES_PARAM_PATTERN: &str = "};";
 
-                    let bytes: Vec<u8> = match bytes
-                        .as_str()
-                        .split(", ")
-                        .map(std::str::FromStr::from_str)
-                        .collect()
+        while let Some(param_start_offset) =
+            kernel_ptx[next_type_layout..type_layout_middle].find(BEFORE_PARAM_PATTERN)
+        {
+            let param_start = next_type_layout + param_start_offset + BEFORE_PARAM_PATTERN.len();
+
+            if let Some(len_start_offset) =
+                kernel_ptx[param_start..type_layout_middle].find(PARAM_LEN_PATTERN)
+            {
+                let len_start = param_start + len_start_offset + PARAM_LEN_PATTERN.len();
+
+                if let Some(bytes_start_offset) =
+                    kernel_ptx[len_start..type_layout_middle].find(LEN_BYTES_PATTERN)
+                {
+                    let bytes_start = len_start + bytes_start_offset + LEN_BYTES_PATTERN.len();
+
+                    if let Some(bytes_end_offset) =
+                        kernel_ptx[bytes_start..type_layout_middle].find(AFTER_BYTES_PATTERN)
                     {
-                        Ok(len) => len,
-                        Err(err) => {
-                            abort_call_site!("Kernel compilation generated invalid PTX: {}", err)
-                        },
-                    };
-                    let byte_str = syn::LitByteStr::new(&bytes, proc_macro2::Span::call_site());
+                        let param = &kernel_ptx[param_start..(param_start + len_start_offset)];
+                        let len = &kernel_ptx[len_start..(len_start + bytes_start_offset)];
+                        let bytes = &kernel_ptx[bytes_start..(bytes_start + bytes_end_offset)];
 
-                    type_layouts.push(quote! {
-                        const #param: &[u8; #len] = #byte_str;
-                    });
-                },
-                _ => abort_call_site!(
-                    "Kernel compilation generated invalid PTX: invalid type layout."
-                ),
-            };
+                        let param = quote::format_ident!("{}", param);
+
+                        let len = match len.parse::<usize>() {
+                            Ok(len) => len,
+                            Err(err) => {
+                                abort_call_site!(
+                                    "Kernel compilation generated invalid PTX: {}",
+                                    err
+                                )
+                            },
+                        };
+
+                        let bytes: Vec<u8> =
+                            match bytes.split(", ").map(std::str::FromStr::from_str).collect() {
+                                Ok(len) => len,
+                                Err(err) => {
+                                    abort_call_site!(
+                                        "Kernel compilation generated invalid PTX: {}",
+                                        err
+                                    )
+                                },
+                            };
+                        let byte_str = syn::LitByteStr::new(&bytes, proc_macro2::Span::call_site());
+
+                        type_layouts.push(quote! {
+                            const #param: &[u8; #len] = #byte_str;
+                        });
+
+                        next_type_layout =
+                            bytes_start + bytes_end_offset + BYTES_PARAM_PATTERN.len();
+                    } else {
+                        next_type_layout = bytes_start;
+                    }
+                } else {
+                    next_type_layout = len_start;
+                }
+            } else {
+                next_type_layout = param_start;
+            }
         }
 
-        let stop = match kernel_ptx[(start + middle)..].find('}') {
-            Some(stop) => stop,
-            None => abort_call_site!("Kernel compilation generated invalid PTX"),
-        };
+        let type_layout_end = type_layout_middle
+            + match kernel_ptx[type_layout_middle..].find('}') {
+                Some(stop) => stop,
+                None => abort_call_site!("Kernel compilation generated invalid PTX"),
+            }
+            + '}'.len_utf8();
 
-        kernel_ptx.replace_range(start..(start + middle + stop + '}'.len_utf8()), "");
+        kernel_ptx.replace_range(type_layout_start..type_layout_end, "");
     }
 
     (quote! { const PTX_STR: &'static str = #kernel_ptx; #(#type_layouts)* }).into()
@@ -250,7 +284,7 @@ fn build_kernel_with_specialisation(
         });
 
         let specialisation_prefix = match specialisation {
-            Specialisation::Check => String::from("chECK"),
+            Specialisation::Check => String::from("check"),
             Specialisation::Link(specialisation) => {
                 format!("{:016x}", seahash::hash(specialisation.as_bytes()))
             },
@@ -274,7 +308,7 @@ fn build_kernel_with_specialisation(
                             "{} of {} ({})",
                             "[PTX]".bright_black().bold(),
                             crate_name.bold(),
-                            specialisation_prefix.to_ascii_lowercase(),
+                            specialisation_prefix,
                         );
                         colored::control::unset_override();
                     }
@@ -315,7 +349,7 @@ fn build_kernel_with_specialisation(
                         "{} of {} ({})",
                         "[PTX]".bright_black().bold(),
                         crate_name.bold(),
-                        specialisation_prefix.to_ascii_lowercase(),
+                        specialisation_prefix,
                     );
                     colored::control::unset_override();
                 }
@@ -332,31 +366,20 @@ fn build_kernel_with_specialisation(
             BuildStatus::Success(output) => {
                 let ptx_path = output.get_assembly_path();
 
-                let mut specialised_ptx_path = ptx_path.clone();
-
-                specialised_ptx_path.set_extension(format!("{}.ptx", specialisation_prefix));
-
-                fs::copy(&ptx_path, &specialised_ptx_path).map_err(|err| {
-                    Error::from(BuildErrorKind::BuildFailed(vec![format!(
-                        "Failed to copy kernel from {:?} to {:?}: {}",
-                        ptx_path, specialised_ptx_path, err,
-                    )]))
-                })?;
-
                 if let Specialisation::Link(specialisation) = specialisation {
                     fs::OpenOptions::new()
                         .append(true)
-                        .open(&specialised_ptx_path)
+                        .open(&ptx_path)
                         .and_then(|mut file| writeln!(file, "\n// {}", specialisation))
                         .map_err(|err| {
                             Error::from(BuildErrorKind::BuildFailed(vec![format!(
                                 "Failed to write specialisation to {:?}: {}",
-                                specialised_ptx_path, err,
+                                ptx_path, err,
                             )]))
                         })?;
                 }
 
-                Ok(specialised_ptx_path)
+                Ok(ptx_path)
             },
             BuildStatus::NotNeeded => Err(Error::from(BuildErrorKind::BuildFailed(vec![format!(
                 "Kernel build for specialisation {:?} was not needed.",
