@@ -18,9 +18,6 @@ extern crate alloc;
 #[macro_use]
 extern crate const_type_layout;
 
-#[cfg(not(target_os = "cuda"))]
-fn main() {}
-
 #[repr(C)]
 #[derive(TypeLayout)]
 pub struct Dummy(i32);

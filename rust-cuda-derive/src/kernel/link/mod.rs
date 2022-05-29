@@ -48,7 +48,7 @@ pub fn check_kernel(tokens: TokenStream) -> TokenStream {
     }
 }
 
-#[allow(clippy::module_name_repetitions)]
+#[allow(clippy::module_name_repetitions, clippy::too_many_lines)]
 pub fn link_kernel(tokens: TokenStream) -> TokenStream {
     proc_macro_error::set_dummy(quote! {
         const PTX_STR: &'static str = "ERROR in this PTX compilation";
@@ -108,6 +108,12 @@ pub fn link_kernel(tokens: TokenStream) -> TokenStream {
     let type_layout_start_pattern = format!("\n\t// .globl\t{}", kernel_layout_name);
 
     if let Some(type_layout_start) = kernel_ptx.find(&type_layout_start_pattern) {
+        const BEFORE_PARAM_PATTERN: &str = "\n.global .align 1 .b8 ";
+        const PARAM_LEN_PATTERN: &str = "[";
+        const LEN_BYTES_PATTERN: &str = "] = {";
+        const AFTER_BYTES_PATTERN: &str = "};\n";
+        const BYTES_PARAM_PATTERN: &str = "};";
+
         let after_type_layout_start = type_layout_start + type_layout_start_pattern.len();
 
         let type_layout_middle = after_type_layout_start
@@ -121,12 +127,6 @@ pub fn link_kernel(tokens: TokenStream) -> TokenStream {
             };
 
         let mut next_type_layout = after_type_layout_start;
-
-        const BEFORE_PARAM_PATTERN: &str = "\n.global .align 1 .b8 ";
-        const PARAM_LEN_PATTERN: &str = "[";
-        const LEN_BYTES_PATTERN: &str = "] = {";
-        const AFTER_BYTES_PATTERN: &str = "};\n";
-        const BYTES_PARAM_PATTERN: &str = "};";
 
         while let Some(param_start_offset) =
             kernel_ptx[next_type_layout..type_layout_middle].find(BEFORE_PARAM_PATTERN)
